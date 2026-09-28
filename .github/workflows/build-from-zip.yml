@@ -34,6 +34,7 @@ jobs:
             exit 1
           fi
 
+          PROJECT_DIR="${GITHUB_WORKSPACE}/${PROJECT_DIR#./}"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Project detected at: $PROJECT_DIR"
 
@@ -88,8 +89,11 @@ jobs:
             -ldflags "-s -X github.com/rclone/rclone/fs.Version=${VERSION}" \
             ./librclone/gomobile
 
+          test -f ./*.aar
           mkdir -p "$PROJECT_DIR/app/libs"
           cp ./*.aar "$PROJECT_DIR/app/libs/librclone.aar"
+          test -s "$PROJECT_DIR/app/libs/librclone.aar"
+          echo "✓ librclone.aar installed at: $PROJECT_DIR/app/libs/librclone.aar"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
