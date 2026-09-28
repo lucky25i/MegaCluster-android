@@ -30,8 +30,38 @@ jobs:
           rm -rf build-source
           mkdir build-source
           unzip -q MegaCluster-android-prototype.zip -d build-source
-          echo "Projet extrait :"
+
+      - name: Vérifier le projet
+        run: |
           find build-source -maxdepth 3 -type f | sort
+
+      - name: Corriger les cibles Java/Kotlin
+        working-directory: build-source/MegaCluster-android-prototype
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("app/build.gradle.kts")
+          s = p.read_text()
+
+          s = s.replace(
+              'compileOptions {',
+              'compileOptions {'
+          )
+
+          if 'kotlinOptions {' not in s:
+              s += '''
+
+          kotlin {
+              jvmToolchain(21)
+          }
+          '''
+
+          p.write_text(s)
+          PY
+
+          echo "----- build.gradle.kts -----"
+          cat app/build.gradle.kts
 
       - name: Installer gomobile
         run: |
@@ -47,33 +77,18 @@ jobs:
           ref: v1.75.1
           path: rclone-src
 
-      - name: Vérifier Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls -la "$ANDROID_HOME"
-          ls -la "$ANDROID_HOME/ndk" || true
-          ls -la "$ANDROID_HOME/platforms" || true
-          ls -la "$ANDROID_HOME/build-tools" || true
-
-      - name: Construire librclone AAR
+      - name: Construire librclone
         working-directory: rclone-src
         run: |
-          VERSION=$(git describe --tags --always)
-
           "$HOME/go/bin/gomobile" bind \
             -v \
             -target=android/arm64 \
             -androidapi 21 \
             -javapkg=org.rclone \
-            -ldflags "-s -X github.com/rclone/rclone/fs.Version=${VERSION}" \
             ./librclone/gomobile
 
-          mkdir -p ../build-source/MegaCluster/app/libs
-          cp ./*.aar ../build-source/MegaCluster/app/libs/librclone.aar
-
-          echo "AAR créé :"
-          ls -lh ../build-source/MegaCluster/app/libs/
+          mkdir -p ../build-source/MegaCluster-android-prototype/app/libs
+          cp ./*.aar ../build-source/MegaCluster-android-prototype/app/libs/librclone.aar
 
       - name: Installer Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -81,7 +96,7 @@ jobs:
           gradle-version: '8.9'
 
       - name: Compiler APK
-        working-directory: build-source/MegaCluster
+        working-directory: build-source/MegaCluster-android-prototype
         run: |
           gradle assembleDebug --stacktrace
 
@@ -89,4 +104,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MegaCluster-debug
-          path: build-source/MegaCluster/app/build/outputs/apk/debug/*.apk
+          path: build-source/MegaCluster-android-prototype/app/build/outputs/apk/debug/*.apk
