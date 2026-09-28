@@ -39,13 +39,18 @@ jobs:
           echo "Projet trouvé dans : $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Afficher le projet trouvé
+      - name: Corriger la cible Kotlin
+        working-directory: ${{ steps.find_project.outputs.PROJECT_DIR }}
         run: |
-          echo "=============================="
-          echo "PROJET ANDROID TROUVÉ"
-          echo "=============================="
-          echo "${{ steps.find_project.outputs.PROJECT_DIR }}"
-          echo "=============================="
+          cat >> app/build.gradle.kts <<'EOF'
+
+          // Correction de compatibilité Java/Kotlin pour la compilation Android
+          tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+              kotlinOptions {
+                  jvmTarget = "1.8"
+              }
+          }
+          EOF
 
       - name: Installer gomobile
         run: |
