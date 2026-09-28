@@ -25,18 +25,14 @@ jobs:
 
       - name: Installer les composants Android
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Extraire le projet
         run: |
           mkdir -p build-source
           unzip -q MegaCluster-android-prototype.zip -d build-source
 
-      - name: Vérifier les fichiers
+      - name: Afficher la structure
         run: |
           find build-source -maxdepth 3 -type f | sort
 
@@ -45,13 +41,13 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Compiler l'application
-        working-directory: build-source/MegaCluster
+      - name: Compiler MEGA Cluster
+        working-directory: build-source/MegaCluster-android-prototype
         run: |
           gradle assembleDebug --stacktrace
 
-      - name: Récupérer l'APK
+      - name: Publier l'APK
         uses: actions/upload-artifact@v4
         with:
           name: MegaCluster-debug
-          path: build-source/MegaCluster/app/build/outputs/apk/debug/*.apk
+          path: build-source/MegaCluster-android-prototype/app/build/outputs/apk/debug/*.apk
