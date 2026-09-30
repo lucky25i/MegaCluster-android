@@ -158,6 +158,10 @@ jobs:
 
           cd "$GITHUB_WORKSPACE/rclone-src"
 
+          echo "Vérification de librclone.go..."
+
+          test -f librclone/librclone/librclone.go
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -165,29 +169,43 @@ jobs:
           s = p.read_text()
 
           imp = '    _ "github.com/rclone/rclone/cmd/serve"\n'
-          needle = '    "github.com/rclone/rclone/fs/rc/jobs"\n'
+          marker = 'import (\n'
 
           if imp not in s:
-              if needle not in s:
+              if marker not in s:
                   raise SystemExit(
-                      "Import point not found in librclone/librclone/librclone.go"
+                      "Bloc import introuvable dans librclone.go"
                   )
 
               s = s.replace(
-                  needle,
-                  needle + imp,
+                  marker,
+                  marker + imp,
                   1
               )
 
               p.write_text(s)
+
+          print("Import cmd/serve présent.")
           PY
+
+          echo "Vérification de l'import cmd/serve..."
+
+          grep -F \
+            'github.com/rclone/rclone/cmd/serve' \
+            librclone/librclone/librclone.go
+
+          echo "Installation de gomobile..."
 
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
 
           export PATH="$(go env GOPATH)/bin:$PATH"
 
+          echo "Initialisation de gomobile..."
+
           gomobile init
+
+          echo "Compilation de librclone.aar..."
 
           gomobile bind \
             -target=android/arm64 \
