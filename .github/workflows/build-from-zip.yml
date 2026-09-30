@@ -73,12 +73,13 @@ jobs:
           fi
 
           if [ -z "$SDKMANAGER" ] && [ -n "${ANDROID_HOME:-}" ]; then
-            CANDIDATE="$(find "$ANDROID_HOME/cmdline-tools" \
-              -type f \
-              -name sdkmanager \
-              -perm -111 \
-              2>/dev/null \
-              | head -n 1 || true)"
+            CANDIDATE="$(
+              find "$ANDROID_HOME/cmdline-tools" \
+                -type f \
+                -name sdkmanager \
+                -perm -111 \
+                2>/dev/null | head -n 1 || true
+            )"
 
             if [ -n "$CANDIDATE" ]; then
               SDKMANAGER="$CANDIDATE"
@@ -86,12 +87,13 @@ jobs:
           fi
 
           if [ -z "$SDKMANAGER" ]; then
-            CANDIDATE="$(find /usr/local/lib/android \
-              -type f \
-              -name sdkmanager \
-              -perm -111 \
-              2>/dev/null \
-              | head -n 1 || true)"
+            CANDIDATE="$(
+              find /usr/local/lib/android \
+                -type f \
+                -name sdkmanager \
+                -perm -111 \
+                2>/dev/null | head -n 1 || true
+            )"
 
             if [ -n "$CANDIDATE" ]; then
               SDKMANAGER="$CANDIDATE"
@@ -101,9 +103,6 @@ jobs:
           if [ -z "$SDKMANAGER" ]; then
             echo "ERREUR : sdkmanager introuvable." >&2
             echo "ANDROID_HOME=${ANDROID_HOME:-non défini}" >&2
-            echo "Contenu des répertoires Android disponibles :" >&2
-            ls -la /usr/local/lib/android 2>/dev/null || true
-            ls -la "${ANDROID_HOME:-/non-existant}" 2>/dev/null || true
             exit 1
           fi
 
@@ -205,6 +204,10 @@ jobs:
 
           gomobile init
 
+          echo "Préparation du dossier de sortie..."
+
+          mkdir -p "$GITHUB_WORKSPACE/app/libs"
+
           echo "Compilation de librclone.aar..."
 
           gomobile bind \
@@ -212,15 +215,14 @@ jobs:
             -androidapi 21 \
             -javapkg=org.rclone \
             -ldflags '-s -X github.com/rclone/rclone/fs.Version=1.75.1' \
+            -o "$GITHUB_WORKSPACE/app/libs/librclone.aar" \
             ./librclone/gomobile
 
-          mkdir -p "$GITHUB_WORKSPACE/app/libs"
-
-          cp -f \
-            ./librclone/gomobile/gomobile.aar \
-            "$GITHUB_WORKSPACE/app/libs/librclone.aar"
+          echo "Vérification de librclone.aar..."
 
           test -s "$GITHUB_WORKSPACE/app/libs/librclone.aar"
+
+          ls -lh "$GITHUB_WORKSPACE/app/libs/librclone.aar"
 
           echo "librclone.aar généré avec succès."
 
