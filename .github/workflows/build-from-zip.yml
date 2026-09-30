@@ -100,4 +100,3 @@ jobs:
         with:
           name: MegaCluster-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
-          
