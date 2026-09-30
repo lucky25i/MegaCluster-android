@@ -58,55 +58,26 @@ jobs:
           java-version: '21'
 
 
-      - name: Locate Android SDK tools
+      - name: Prepare Android SDK
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Recherche de sdkmanager..."
+          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
 
-          SDKMANAGER=""
-
-          if command -v sdkmanager >/dev/null 2>&1; then
-            SDKMANAGER="$(command -v sdkmanager)"
-
-          elif [ -n "${ANDROID_HOME:-}" ] \
-            && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          else
-            CANDIDATE="$(
-              find /usr/local/lib/android \
-                -type f \
-                -name sdkmanager \
-                -perm -111 \
-                2>/dev/null | head -n 1 || true
-            )
-
-            if [ -n "$CANDIDATE" ]; then
-              SDKMANAGER="$CANDIDATE"
-            fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager"
           fi
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERREUR : sdkmanager introuvable." >&2
-            echo "ANDROID_HOME=${ANDROID_HOME:-non défini}" >&2
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager introuvable."
+            find /usr/local/lib/android -name sdkmanager -type f 2>/dev/null || true
             exit 1
           fi
 
-          echo "sdkmanager trouvé : $SDKMANAGER"
-
-          test -x "$SDKMANAGER"
+          echo "sdkmanager : $SDKMANAGER"
 
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-
-
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Acceptation des licences Android..."
 
           yes | "$SDKMANAGER" --licenses >/dev/null || true
 
@@ -122,8 +93,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Installation du NDK 27.2.12479018..."
-
           "$SDKMANAGER" "ndk;27.2.12479018"
 
           test -d "$ANDROID_HOME/ndk/27.2.12479018"
@@ -131,7 +100,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
-          echo "NDK installé avec succès."
+          echo "NDK installé."
 
 
       - name: Build rclone gomobile AAR with HTTP streaming support
@@ -149,8 +118,6 @@ jobs:
 
           cd "$GITHUB_WORKSPACE/rclone-src"
 
-          echo "Vérification de librclone.go..."
-
           test -f librclone/librclone/librclone.go
 
           python3 - <<'PY'
@@ -159,53 +126,30 @@ jobs:
           p = Path("librclone/librclone/librclone.go")
           s = p.read_text()
 
-          # IMPORTANT :
-          # Cet import enregistre le serveur HTTP rclone.
-          # Il permet à l'API RC de fournir :
-          # serve/start
-          # serve/list
-          # serve/stop
-          #
-          # Il est volontairement importé directement.
           imp = '    _ "github.com/rclone/rclone/cmd/serve/http"\n'
 
-          marker = 'import (\n'
-
           if imp not in s:
+              marker = "import (\n"
+
               if marker not in s:
-                  raise SystemExit(
-                      "Bloc import introuvable dans librclone.go"
-                  )
+                  raise SystemExit("Bloc import introuvable.")
 
-              s = s.replace(
-                  marker,
-                  marker + imp,
-                  1
-              )
-
+              s = s.replace(marker, marker + imp, 1)
               p.write_text(s)
 
           print("Import HTTP rclone présent.")
           PY
 
-          echo "Vérification de l'import HTTP..."
-
           grep -F \
             'github.com/rclone/rclone/cmd/serve/http' \
             librclone/librclone/librclone.go
-
-          echo "Installation de gomobile..."
 
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
 
           export PATH="$(go env GOPATH)/bin:$PATH"
 
-          echo "Initialisation de gomobile..."
-
           gomobile init
-
-          echo "Construction de librclone.aar..."
 
           mkdir -p "$GITHUB_WORKSPACE/app/libs"
 
@@ -217,13 +161,11 @@ jobs:
             -ldflags '-s -X github.com/rclone/rclone/fs.Version=1.75.1' \
             ./librclone/gomobile
 
-          echo "Vérification du AAR..."
-
           test -s "$GITHUB_WORKSPACE/app/libs/librclone.aar"
 
           ls -lh "$GITHUB_WORKSPACE/app/libs/librclone.aar"
 
-          echo "librclone.aar créé avec succès."
+          echo "librclone.aar créé."
 
 
       - name: Set up Gradle 8.9
@@ -245,7 +187,7 @@ jobs:
           test -f gradle/wrapper/gradle-wrapper.jar
           test -f gradle/wrapper/gradle-wrapper.properties
 
-          echo "Gradle wrapper 8.9 généré avec succès."
+          echo "Gradle wrapper généré."
 
 
       - name: Make Gradle wrapper executable
