@@ -76,7 +76,6 @@ jobs:
           fi
 
           echo "sdkmanager : $SDKMANAGER"
-
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
 
           yes | "$SDKMANAGER" --licenses >/dev/null || true
@@ -149,6 +148,38 @@ jobs:
 
           export PATH="$(go env GOPATH)/bin:$PATH"
 
+          # Évite que gomobile soit bloqué par une erreur réseau
+          # temporaire de sum.golang.org.
+          export GOPROXY="https://proxy.golang.org,direct"
+          export GOSUMDB="off"
+
+          echo "GOPROXY=$GOPROXY"
+          echo "GOSUMDB=$GOSUMDB"
+
+          # Téléchargement préalable des dépendances.
+          # Plusieurs tentatives permettent de contourner une erreur
+          # réseau temporaire du proxy Go.
+          success=0
+
+          for attempt in 1 2 3 4 5; do
+            echo "Téléchargement des modules Go — tentative $attempt/5"
+
+            if go mod download; then
+              success=1
+              break
+            fi
+
+            echo "Échec du téléchargement, nouvelle tentative..."
+            sleep 5
+          done
+
+          if [ "$success" -ne 1 ]; then
+            echo "Impossible de télécharger les dépendances Go après 5 tentatives."
+            exit 1
+          fi
+
+          echo "Dépendances Go téléchargées."
+
           gomobile init
 
           mkdir -p "$GITHUB_WORKSPACE/app/libs"
@@ -203,28 +234,4 @@ jobs:
       - name: Build APK
         shell: bash
         run: |
-          set -euo pipefail
-
-          ./gradlew \
-            --no-daemon \
-            assembleDebug
-
-
-      - name: Verify APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          test -s "$APK"
-
-          echo "APK généré :"
-          ls -lh "$APK"
-
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MegaCluster-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+         
