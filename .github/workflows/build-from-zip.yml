@@ -20,22 +20,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           ZIP="$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)"
+
           if [ -z "$ZIP" ]; then
             echo "Aucun ZIP de projet trouvé à la racine." >&2
             exit 1
           fi
+
+          echo "ZIP trouvé : $ZIP"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
 
       - name: Extract project
         shell: bash
         run: |
           set -euo pipefail
+
           rm -rf project
           mkdir project
+
           unzip -q "${{ steps.zip.outputs.zip }}" -d project
+
           test -f project/settings.gradle.kts
+
           cp -a project/. .
+
           rm -rf project
 
       - name: Set up Java 21
@@ -48,7 +57,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
+
+          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager"
+
+          echo "Vérification de sdkmanager..."
+          test -x "$SDKMANAGER"
+
+          echo "sdkmanager trouvé : $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -59,7 +76,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "ndk;27.2.12479018"
+
+          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager"
+
+          echo "Vérification de sdkmanager..."
+          test -x "$SDKMANAGER"
+
+          echo "Installation du NDK 27.2.12479018..."
+
+          "$SDKMANAGER" "ndk;27.2.12479018"
+
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
@@ -89,8 +115,16 @@ jobs:
 
           if imp not in s:
               if needle not in s:
-                  raise SystemExit("Import point not found in librclone.go")
-              s = s.replace(needle, needle + imp, 1)
+                  raise SystemExit(
+                      "Import point not found in librclone/librclone/librclone.go"
+                  )
+
+              s = s.replace(
+                  needle,
+                  needle + imp,
+                  1
+              )
+
               p.write_text(s)
           PY
 
@@ -116,11 +150,19 @@ jobs:
 
           test -s "$GITHUB_WORKSPACE/app/libs/librclone.aar"
 
+          echo "librclone.aar généré avec succès."
+
       - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
 
       - name: Build APK
-        run: ./gradlew --no-daemon assembleDebug
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
