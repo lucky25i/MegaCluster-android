@@ -12,8 +12,10 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+
       - name: Checkout project
         uses: actions/checkout@v4
+
 
       - name: Find project ZIP
         id: zip
@@ -31,6 +33,7 @@ jobs:
           echo "ZIP trouvé : $ZIP"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
 
+
       - name: Extract project
         shell: bash
         run: |
@@ -47,11 +50,13 @@ jobs:
 
           rm -rf project
 
+
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
+
 
       - name: Locate Android SDK tools
         shell: bash
@@ -66,202 +71,4 @@ jobs:
             SDKMANAGER="$(command -v sdkmanager)"
           fi
 
-          if [ -z "$SDKMANAGER" ] && [ -n "${ANDROID_HOME:-}" ]; then
-            if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-              SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-            fi
-          fi
-
-          if [ -z "$SDKMANAGER" ] && [ -n "${ANDROID_HOME:-}" ]; then
-            CANDIDATE="$(
-              find "$ANDROID_HOME/cmdline-tools" \
-                -type f \
-                -name sdkmanager \
-                -perm -111 \
-                2>/dev/null | head -n 1 || true
-            )"
-
-            if [ -n "$CANDIDATE" ]; then
-              SDKMANAGER="$CANDIDATE"
-            fi
-          fi
-
-          if [ -z "$SDKMANAGER" ]; then
-            CANDIDATE="$(
-              find /usr/local/lib/android \
-                -type f \
-                -name sdkmanager \
-                -perm -111 \
-                2>/dev/null | head -n 1 || true
-            )"
-
-            if [ -n "$CANDIDATE" ]; then
-              SDKMANAGER="$CANDIDATE"
-            fi
-          fi
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERREUR : sdkmanager introuvable." >&2
-            echo "ANDROID_HOME=${ANDROID_HOME:-non défini}" >&2
-            exit 1
-          fi
-
-          echo "sdkmanager trouvé : $SDKMANAGER"
-
-          test -x "$SDKMANAGER"
-
-          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-
-      - name: Accept Android SDK licenses
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Acceptation des licences Android..."
-
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.6'
-
-      - name: Install Android NDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Installation du NDK 27.2.12479018..."
-
-          "$SDKMANAGER" "ndk;27.2.12479018"
-
-          test -d "$ANDROID_HOME/ndk/27.2.12479018"
-
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-
-          echo "NDK installé avec succès."
-
-      - name: Build rclone gomobile AAR with HTTP serve support
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf "$GITHUB_WORKSPACE/rclone-src"
-
-          git clone \
-            --depth 1 \
-            --branch v1.75.1 \
-            https://github.com/rclone/rclone.git \
-            "$GITHUB_WORKSPACE/rclone-src"
-
-          cd "$GITHUB_WORKSPACE/rclone-src"
-
-          echo "Vérification de librclone.go..."
-
-          test -f librclone/librclone/librclone.go
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("librclone/librclone/librclone.go")
-          s = p.read_text()
-
-          imp = '    _ "github.com/rclone/rclone/cmd/serve"\n'
-          marker = 'import (\n'
-
-          if imp not in s:
-              if marker not in s:
-                  raise SystemExit(
-                      "Bloc import introuvable dans librclone.go"
-                  )
-
-              s = s.replace(
-                  marker,
-                  marker + imp,
-                  1
-              )
-
-              p.write_text(s)
-
-          print("Import cmd/serve présent.")
-          PY
-
-          echo "Vérification de l'import cmd/serve..."
-
-          grep -F \
-            'github.com/rclone/rclone/cmd/serve' \
-            librclone/librclone/librclone.go
-
-          echo "Installation de gomobile..."
-
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-
-          export PATH="$(go env GOPATH)/bin:$PATH"
-
-          echo "Initialisation de gomobile..."
-
-          gomobile init
-
-          echo "Préparation du dossier de sortie..."
-
-          mkdir -p "$GITHUB_WORKSPACE/app/libs"
-
-          echo "Compilation de librclone.aar..."
-
-          gomobile bind \
-            -target=android/arm64 \
-            -androidapi 21 \
-            -javapkg=org.rclone \
-            -ldflags '-s -X github.com/rclone/rclone/fs.Version=1.75.1' \
-            -o "$GITHUB_WORKSPACE/app/libs/librclone.aar" \
-            ./librclone/gomobile
-
-          echo "Vérification de librclone.aar..."
-
-          test -s "$GITHUB_WORKSPACE/app/libs/librclone.aar"
-
-          ls -lh "$GITHUB_WORKSPACE/app/libs/librclone.aar"
-
-          echo "librclone.aar généré avec succès."
-
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Generate Gradle wrapper
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf gradle/wrapper
-
-          gradle wrapper --gradle-version 8.9
-
-          test -f gradlew
-          test -f gradle/wrapper/gradle-wrapper.jar
-          test -f gradle/wrapper/gradle-wrapper.properties
-
-          echo "Gradle wrapper 8.9 généré avec succès."
-
-      - name: Make Gradle wrapper executable
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          chmod +x ./gradlew
-
-      - name: Build APK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ./gradlew --no-daemon assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MegaCluster-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          if [ -
