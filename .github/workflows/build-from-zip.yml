@@ -53,17 +53,72 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Prepare Android SDK
+      - name: Locate Android SDK tools
         shell: bash
         run: |
           set -euo pipefail
 
-          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager"
+          echo "Recherche de sdkmanager..."
 
-          echo "Vérification de sdkmanager..."
-          test -x "$SDKMANAGER"
+          SDKMANAGER=""
+
+          if command -v sdkmanager >/dev/null 2>&1; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+
+          if [ -z "$SDKMANAGER" ] && [ -n "${ANDROID_HOME:-}" ]; then
+            if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+              SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+            fi
+          fi
+
+          if [ -z "$SDKMANAGER" ] && [ -n "${ANDROID_HOME:-}" ]; then
+            CANDIDATE="$(find "$ANDROID_HOME/cmdline-tools" \
+              -type f \
+              -name sdkmanager \
+              -perm -111 \
+              2>/dev/null \
+              | head -n 1 || true)"
+
+            if [ -n "$CANDIDATE" ]; then
+              SDKMANAGER="$CANDIDATE"
+            fi
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            CANDIDATE="$(find /usr/local/lib/android \
+              -type f \
+              -name sdkmanager \
+              -perm -111 \
+              2>/dev/null \
+              | head -n 1 || true)"
+
+            if [ -n "$CANDIDATE" ]; then
+              SDKMANAGER="$CANDIDATE"
+            fi
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERREUR : sdkmanager introuvable." >&2
+            echo "ANDROID_HOME=${ANDROID_HOME:-non défini}" >&2
+            echo "Contenu des répertoires Android disponibles :" >&2
+            ls -la /usr/local/lib/android 2>/dev/null || true
+            ls -la "${ANDROID_HOME:-/non-existant}" 2>/dev/null || true
+            exit 1
+          fi
 
           echo "sdkmanager trouvé : $SDKMANAGER"
+
+          test -x "$SDKMANAGER"
+
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Acceptation des licences Android..."
 
           yes | "$SDKMANAGER" --licenses >/dev/null || true
 
@@ -77,17 +132,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager"
-
-          echo "Vérification de sdkmanager..."
-          test -x "$SDKMANAGER"
-
           echo "Installation du NDK 27.2.12479018..."
 
           "$SDKMANAGER" "ndk;27.2.12479018"
 
+          test -d "$ANDROID_HOME/ndk/27.2.12479018"
+
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+          echo "NDK installé avec succès."
 
       - name: Build rclone gomobile AAR with HTTP serve support
         shell: bash
@@ -156,12 +210,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           chmod +x ./gradlew
 
       - name: Build APK
         shell: bash
         run: |
           set -euo pipefail
+
           ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK
