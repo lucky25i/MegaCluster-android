@@ -1,245 +1,239 @@
-name: Build APK
+name: Build RClone Manager APK
 
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'rclone-manager-0.3.3-megacluster-backup-import.zip'
-      - '.github/workflows/build-from-zip.yml'
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout project
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Find project ZIP
-        id: zip
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           ZIP="./rclone-manager-0.3.3-megacluster-backup-import.zip"
 
           if [ ! -f "$ZIP" ]; then
-            echo "ZIP attendu introuvable : $ZIP" >&2
-            echo "Contenu de la racine du dépôt :"
-            ls -lah
+            echo "::error::ZIP introuvable : $ZIP"
+            echo "Fichiers présents dans le dépôt :"
+            find . -maxdepth 2 -type f | sort
             exit 1
           fi
 
           echo "ZIP trouvé : $ZIP"
-          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
 
       - name: Extract project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           rm -rf project
-          mkdir project
+          mkdir -p project
 
-          unzip -q "${{ steps.zip.outputs.zip }}" -d project
+          unzip -q "./rclone-manager-0.3.3-megacluster-backup-import.zip" -d project
 
-          test -f project/settings.gradle.kts
+          echo "Recherche de settings.gradle.kts..."
 
-          cp -a project/. .
+          PROJECT_DIR="$(find project -type f -name 'settings.gradle.kts' -print -quit | xargs -r dirname)"
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "::error::Impossible de trouver settings.gradle.kts dans le ZIP."
+            echo "Contenu extrait :"
+            find project -maxdepth 4 -type f | sort | head -300
+            exit 1
+          fi
+
+          echo "Projet trouvé dans : $PROJECT_DIR"
+
+          cp -a "$PROJECT_DIR"/. .
 
           rm -rf project
 
-      - name: Set up Java 21
+          echo "Racine du projet :"
+          ls -la
+
+          if [ ! -f "settings.gradle.kts" ]; then
+            echo "::error::settings.gradle.kts absent après extraction."
+            exit 1
+          fi
+
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Prepare Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/16.0/bin/sdkmanager"
-          fi
-
-          if [ ! -x "$SDKMANAGER" ]; then
-            echo "sdkmanager introuvable."
-            find /usr/local/lib/android -name sdkmanager -type f 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "sdkmanager : $SDKMANAGER"
-          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-
-      - name: Set up Go
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.6'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Install Android NDK
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          "$SDKMANAGER" "ndk;27.2.12479018"
+          sdkmanager --install "ndk;27.2.12479018"
 
-          test -d "$ANDROID_HOME/ndk/27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-
-          echo "NDK installé."
-
-      - name: Build rclone gomobile AAR with HTTP streaming support
+      - name: Clone rclone
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          rm -rf "$GITHUB_WORKSPACE/rclone-src"
+          rm -rf rclone
 
-          git clone \
-            --depth 1 \
-            --branch v1.75.1 \
-            https://github.com/rclone/rclone.git \
-            "$GITHUB_WORKSPACE/rclone-src"
+          git clone --depth 1 --branch v1.75.1 \
+            https://github.com/rclone/rclone.git
 
-          cd "$GITHUB_WORKSPACE/rclone-src"
+      - name: Prepare rclone for librclone
+        shell: bash
+        run: |
+          set -e
 
-          test -f librclone/librclone/librclone.go
+          cd rclone
 
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("librclone/librclone/librclone.go")
-          s = p.read_text()
-
-          imp = '    _ "github.com/rclone/rclone/cmd/serve/http"\n'
-
-          if imp not in s:
-              marker = "import (\n"
-
-              if marker not in s:
-                  raise SystemExit("Bloc import introuvable.")
-
-              s = s.replace(marker, marker + imp, 1)
-              p.write_text(s)
-
-          print("Import HTTP rclone présent.")
-          PY
-
-          grep -F \
-            'github.com/rclone/rclone/cmd/serve/http' \
+          grep -q 'github.com/rclone/rclone/cmd/serve/http' \
+            librclone/librclone/librclone.go || \
+          sed -i '/^import (/a\\	_ "github.com/rclone/rclone/cmd/serve/http"' \
             librclone/librclone/librclone.go
+
+          echo "Vérification de librclone.go :"
+          sed -n '1,80p' librclone/librclone/librclone.go
+
+      - name: Build librclone.aar
+        shell: bash
+        run: |
+          set -e
+
+          cd rclone
+
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
 
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
 
           export PATH="$(go env GOPATH)/bin:$PATH"
 
-          export GOPROXY="https://proxy.golang.org,direct"
-          export GOSUMDB="off"
-
-          echo "GOPROXY=$GOPROXY"
-          echo "GOSUMDB=$GOSUMDB"
-
-          success=0
-
-          for attempt in 1 2 3 4 5; do
-            echo "Téléchargement des modules Go — tentative $attempt/5"
-
-            if go mod download; then
-              success=1
-              break
-            fi
-
-            echo "Échec du téléchargement, nouvelle tentative..."
-            sleep 5
-          done
-
-          if [ "$success" -ne 1 ]; then
-            echo "Impossible de télécharger les dépendances Go après 5 tentatives."
-            exit 1
-          fi
-
-          echo "Dépendances Go téléchargées."
-
           gomobile init
 
-          mkdir -p "$GITHUB_WORKSPACE/app/libs"
+          cd librclone
 
           gomobile bind \
-            -target=android/arm64 \
-            -androidapi 21 \
-            -javapkg=org.rclone \
-            -o "$GITHUB_WORKSPACE/app/libs/librclone.aar" \
-            -ldflags '-s -X github.com/rclone/rclone/fs.Version=1.75.1' \
-            ./librclone/gomobile
+            -target=android \
+            -androidapi=23 \
+            -o librclone.aar \
+            ./librclone
 
-          test -s "$GITHUB_WORKSPACE/app/libs/librclone.aar"
+          echo "AAR généré :"
+          ls -lh librclone.aar
 
-          ls -lh "$GITHUB_WORKSPACE/app/libs/librclone.aar"
+      - name: Install librclone.aar
+        shell: bash
+        run: |
+          set -e
 
-          echo "librclone.aar créé."
+          mkdir -p app/libs
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+          cp rclone/librclone/librclone.aar app/libs/librclone.aar
+
+          echo "Contenu de app/libs :"
+          ls -lh app/libs
 
       - name: Generate Gradle wrapper
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          rm -rf gradle/wrapper
+          if [ ! -f "./gradlew" ]; then
+            echo "gradlew absent : génération du wrapper..."
 
-          gradle wrapper --gradle-version 8.9
+            mkdir -p /tmp/gradle
 
-          test -f gradlew
-          test -f gradle/wrapper/gradle-wrapper.jar
-          test -f gradle/wrapper/gradle-wrapper.properties
+            cd /tmp/gradle
 
-          echo "Gradle wrapper généré."
+            wget -q \
+              https://services.gradle.org/distributions/gradle-8.9-bin.zip \
+              -O gradle.zip
 
-      - name: Make Gradle wrapper executable
-        shell: bash
-        run: |
-          set -euo pipefail
+            unzip -q gradle.zip
+
+            cd gradle-8.9
+
+            ./bin/gradle wrapper \
+              --gradle-version 8.9 \
+              --distribution-type bin
+
+            cp gradlew "$GITHUB_WORKSPACE/gradlew"
+            cp -r gradle "$GITHUB_WORKSPACE/gradle"
+          fi
 
           chmod +x ./gradlew
 
-          test -x ./gradlew
+          echo "Gradle wrapper prêt."
 
-      - name: Build APK
+      - name: Check Android project
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
+
+          echo "settings.gradle.kts :"
+          ls -lh settings.gradle.kts
+
+          echo
+          echo "build.gradle files :"
+          find . -maxdepth 3 \
+            \( -name 'build.gradle' -o -name 'build.gradle.kts' \) \
+            -print | sort
+
+          echo
+          echo "Android manifests :"
+          find . -name AndroidManifest.xml -print | sort
+
+          echo
+          echo "librclone :"
+          ls -lh app/libs/librclone.aar
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -e
 
           ./gradlew \
             --no-daemon \
+            --stacktrace \
             assembleDebug
 
-      - name: Verify APK
+      - name: Find APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          test -s "$APK"
-
-          echo "APK généré :"
-          ls -lh "$APK"
+          echo "APK générés :"
+          find . \
+            -type f \
+            \( -name "*.apk" -o -name "*.aab" \) \
+            -print | sort
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: RClone-Manager-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            **/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
