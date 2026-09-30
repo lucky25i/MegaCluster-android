@@ -226,6 +226,26 @@ jobs:
 
           echo "librclone.aar généré avec succès."
 
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate Gradle wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf gradle/wrapper
+
+          gradle wrapper --gradle-version 8.9
+
+          test -f gradlew
+          test -f gradle/wrapper/gradle-wrapper.jar
+          test -f gradle/wrapper/gradle-wrapper.properties
+
+          echo "Gradle wrapper 8.9 généré avec succès."
+
       - name: Make Gradle wrapper executable
         shell: bash
         run: |
