@@ -1,4 +1,4 @@
-name: Build RClone Manager APK
+name: Build MegaCluster Android APK
 
 on:
   workflow_dispatch:
@@ -10,230 +10,190 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-android:
+    name: Build MegaCluster APK (arm64)
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
+      - name: Checkout MegaCluster repository
         uses: actions/checkout@v4
 
-      - name: Find project ZIP
+      - name: Extract MegaCluster source ZIP
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           ZIP="./rclone-manager-0.3.3-megacluster-backup-import.zip"
 
           if [ ! -f "$ZIP" ]; then
             echo "::error::ZIP introuvable : $ZIP"
-            echo "Fichiers présents dans le dépôt :"
-            find . -maxdepth 2 -type f | sort
             exit 1
           fi
-
-          echo "ZIP trouvé : $ZIP"
-
-      - name: Extract project
-        shell: bash
-        run: |
-          set -e
 
           rm -rf project
           mkdir -p project
 
-          unzip -q "./rclone-manager-0.3.3-megacluster-backup-import.zip" -d project
+          unzip -q "$ZIP" -d project
 
-          echo "Recherche de settings.gradle.kts..."
-
-          PROJECT_DIR="$(find project -type f -name 'settings.gradle.kts' -print -quit | xargs -r dirname)"
+          PROJECT_DIR="$(find project -type f -name package.json -print -quit | xargs -r dirname)"
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Impossible de trouver settings.gradle.kts dans le ZIP."
-            echo "Contenu extrait :"
-            find project -maxdepth 4 -type f | sort | head -300
+            echo "::error::Impossible de trouver package.json dans le ZIP."
+            find project -maxdepth 5 -type f | sort | head -300
             exit 1
           fi
 
-          echo "Projet trouvé dans : $PROJECT_DIR"
+          echo "Projet Tauri trouvé : $PROJECT_DIR"
 
           cp -a "$PROJECT_DIR"/. .
 
           rm -rf project
 
-          echo "Racine du projet :"
-          ls -la
-
-          if [ ! -f "settings.gradle.kts" ]; then
-            echo "::error::settings.gradle.kts absent après extraction."
+          if [ ! -f "package.json" ]; then
+            echo "::error::package.json absent après extraction."
             exit 1
           fi
 
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
+          if [ ! -f "src-tauri/Cargo.toml" ]; then
+            echo "::error::src-tauri/Cargo.toml absent."
+            exit 1
+          fi
+
+          if [ ! -f "src-tauri/tauri.conf.json" ]; then
+            echo "::error::src-tauri/tauri.conf.json absent."
+            exit 1
+          fi
+
+          echo "=== Projet ==="
+          node -e "const p=require('./package.json'); console.log('package:',p.name,'version:',p.version)"
+
+          echo "=== Tauri ==="
+          node -e "const p=require('./src-tauri/tauri.conf.json'); console.log('app:',p.productName,'version:',p.version)"
+
+      - name: Checkout rclone source
+        uses: actions/checkout@v4
         with:
-          distribution: temurin
-          java-version: '21'
+          repository: rclone/rclone
+          path: rclone
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version: '1.22'
+
+      - name: Setup Rust stable + Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
-      - name: Install Android NDK
+      - name: Install Android SDK and NDK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          sdkmanager --install "ndk;27.2.12479018"
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;26.1.10909125"
 
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
-      - name: Clone rclone
+      - name: Install frontend dependencies
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+          npm install
 
-          rm -rf rclone
-
-          git clone --depth 1 --branch v1.75.1 \
-            https://github.com/rclone/rclone.git
-
-      - name: Prepare rclone for librclone
+      - name: Initialize Tauri Android project
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          cd rclone
-
-          grep -q 'github.com/rclone/rclone/cmd/serve/http' \
-            librclone/librclone/librclone.go || \
-          sed -i '/^import (/a\\	_ "github.com/rclone/rclone/cmd/serve/http"' \
-            librclone/librclone/librclone.go
-
-          echo "Vérification de librclone.go :"
-          sed -n '1,80p' librclone/librclone/librclone.go
-
-      - name: Build librclone.aar
-        shell: bash
-        run: |
-          set -e
-
-          cd rclone
-
-          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
-
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-
-          export PATH="$(go env GOPATH)/bin:$PATH"
-
-          gomobile init
-
-          cd librclone
-
-          gomobile bind \
-            -target=android \
-            -androidapi=23 \
-            -o librclone.aar \
-            ./librclone
-
-          echo "AAR généré :"
-          ls -lh librclone.aar
-
-      - name: Install librclone.aar
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p app/libs
-
-          cp rclone/librclone/librclone.aar app/libs/librclone.aar
-
-          echo "Contenu de app/libs :"
-          ls -lh app/libs
-
-      - name: Generate Gradle wrapper
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -f "./gradlew" ]; then
-            echo "gradlew absent : génération du wrapper..."
-
-            mkdir -p /tmp/gradle
-
-            cd /tmp/gradle
-
-            wget -q \
-              https://services.gradle.org/distributions/gradle-8.9-bin.zip \
-              -O gradle.zip
-
-            unzip -q gradle.zip
-
-            cd gradle-8.9
-
-            ./bin/gradle wrapper \
-              --gradle-version 8.9 \
-              --distribution-type bin
-
-            cp gradlew "$GITHUB_WORKSPACE/gradlew"
-            cp -r gradle "$GITHUB_WORKSPACE/gradle"
+          if [ ! -d "src-tauri/gen/android" ]; then
+            echo "Initialisation du projet Android Tauri..."
+            npm run tauri android init -- --ci
+          else
+            echo "src-tauri/gen/android existe déjà."
           fi
 
-          chmod +x ./gradlew
-
-          echo "Gradle wrapper prêt."
-
-      - name: Check Android project
+      - name: Build arm64 APK
         shell: bash
+        env:
+          NDK_HOME: ${{ env.NDK_HOME }}
+          RCLONE_SRC_DIR: ${{ github.workspace }}/rclone
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "settings.gradle.kts :"
-          ls -lh settings.gradle.kts
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
 
-          echo
-          echo "build.gradle files :"
-          find . -maxdepth 3 \
-            \( -name 'build.gradle' -o -name 'build.gradle.kts' \) \
-            -print | sort
+          rm -rf dist_apks
+          mkdir -p dist_apks
 
-          echo
-          echo "Android manifests :"
-          find . -name AndroidManifest.xml -print | sort
+          rm -rf src-tauri/gen/android/app/build/outputs/apk/
 
-          echo
-          echo "librclone :"
-          ls -lh app/libs/librclone.aar
+          echo "=========================================="
+          echo "Construction de MegaCluster v$VERSION"
+          echo "Architecture : aarch64 / arm64-v8a"
+          echo "=========================================="
 
-      - name: Build debug APK
-        shell: bash
-        run: |
-          set -e
+          RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384" \
+            npm run tauri android build -- \
+              --apk \
+              --target aarch64 \
+              --features mobile \
+              --ci \
+              -- \
+              --no-default-features
 
-          ./gradlew \
-            --no-daemon \
-            --stacktrace \
-            assembleDebug
-
-      - name: Find APK
-        shell: bash
-        run: |
-          set -e
-
-          echo "APK générés :"
-          find . \
+          APK_PATH="$(find \
+            src-tauri/gen/android/app/build/outputs/apk/ \
             -type f \
-            \( -name "*.apk" -o -name "*.aab" \) \
-            -print | sort
+            -name '*.apk' \
+            -print \
+            -quit)"
 
-      - name: Upload APK
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "::error::Aucun APK généré."
+
+            echo "Fichiers présents :"
+            find src-tauri/gen/android/app/build/outputs \
+              -type f \
+              -print \
+              | sort || true
+
+            exit 1
+          fi
+
+          cp "$APK_PATH" \
+            "dist_apks/MegaCluster-${VERSION}-arm64-v8a.apk"
+
+          echo ""
+          echo "=========================================="
+          echo "APK GÉNÉRÉ"
+          echo "=========================================="
+
+          ls -lh dist_apks/
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RClone-Manager-debug-apk
-          path: |
-            **/build/outputs/apk/debug/*.apk
+          name: MegaCluster-Android-arm64
+          path: dist_apks/*.apk
           if-no-files-found: error
